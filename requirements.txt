@@ -1,0 +1,7 @@
+semantic-kernel
+python-dotenv
+aiohttp
+streamlit
+openai
+numpy
+pandas
