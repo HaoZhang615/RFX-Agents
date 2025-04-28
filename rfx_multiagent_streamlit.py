@@ -5,12 +5,7 @@ import os
 import asyncio
 import uuid
 import streamlit as st
-from colorama import Fore, Style, init
 import hashlib
-
-# Initialize colorama for cross-platform colored terminal output
-init()
-
 # Import from refactored modules
 from helper.utils import load_env_variables, get_agent_avatar, render_agents_online, logger
 from helper.agents import MultiAgent
