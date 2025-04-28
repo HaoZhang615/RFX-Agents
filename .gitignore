@@ -1,1 +1,4 @@
 .env
+helper/__pycache__/__pycache__/
+*.py[cod]
+*.class
