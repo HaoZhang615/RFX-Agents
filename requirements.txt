@@ -5,3 +5,7 @@ streamlit
 openai
 numpy
 pandas
+# Azure AI Project dependencies (required for the refactored websearchagent)
+azure-ai-projects
+azure-identity
+azure-ai-agents ==1.1.0b4

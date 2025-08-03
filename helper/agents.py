@@ -2,12 +2,15 @@
 Agent definitions and prompts for MultiAgent system.
 """
 import os
+from dotenv import load_dotenv
 import asyncio
 import logging
 from typing import List, Dict
-
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
+from azure.ai.agents.models import BingGroundingTool, BingCustomSearchTool
 from semantic_kernel import Kernel
-from semantic_kernel.agents import AgentGroupChat, ChatCompletionAgent
+from semantic_kernel.agents import AgentGroupChat, ChatCompletionAgent, AzureAIAgent, AzureAIAgentSettings, AzureAIAgentThread
 from semantic_kernel.agents.strategies import (
     KernelFunctionSelectionStrategy, 
     KernelFunctionTerminationStrategy
@@ -16,10 +19,13 @@ from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion, OpenAIPro
 from semantic_kernel.connectors.ai import FunctionChoiceBehavior
 from semantic_kernel.functions import KernelFunctionFromPrompt, KernelArguments
 
-from helper.web_search import WebSearchPlugin
+# from helper.web_search import WebSearchPlugin
 from helper.link_checker import LinkCheckerPlugin
 
 logger = logging.getLogger(__name__)
+
+# Load environment variables from .env file
+load_dotenv()
 
 class MultiAgent:
     """
@@ -41,8 +47,8 @@ class MultiAgent:
         self.link_checker_model = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME") # 
         self.manager_model = os.getenv("AZURE_OPENAI_CHAT_NANO_DEPLOYMENT_NAME") # 
         
-        # Bing API key
-        self.bing_api_key = os.getenv("BING_SEARCH_API_KEY")
+        # # Bing API key
+        # self.bing_api_key = os.getenv("BING_SEARCH_API_KEY")
         
         # Initialize conversation history
         self.conversation_history = []
@@ -50,25 +56,22 @@ class MultiAgent:
         # Initialize agent prompts
         self.update_prompts()
         
-    def update_prompts(self, context=None):
-        """Update the agent prompts based on current context."""
-        if context:
-            self.context = context
-            
-        self.question_answerer_prompt = f"""
-            You are a question answerer for {self.context} to help with a RFP/RFQ/RFI situation.
-            You take in questions from a questionnaire and emit the answers from the perspective of {self.context},
-            IMPORTANT: You must ALWAYS perform web search using the WebSearchPlugin to verify the facts in the answer.
-            Do not rely on your knowledge - search for the most current and accurate information. You also emit links to any websites you find that help answer the questions.
-            If you do not find information on a topic, you simply respond that there is no information available on that topic.
-        """
+    def update_prompts(self):
+        
+        # self.question_answerer_prompt = f"""
+        #     You are a question answerer working for Microsoft to help with a RFP/RFQ/RFI situation.
+        #     You take in questions from a questionnaire and emit the answers from the perspective of a Microsoft seller.
+        #     IMPORTANT: You must ALWAYS perform web search using the WebSearchPlugin to verify the facts in the answer.
+        #     Do not rely on your knowledge - search for the most current and accurate information. You also emit links to any websites you find that help answer the questions.
+        #     If you do not find information on a topic, you simply respond that there is no information available on that topic.
+        # """
         
         self.answer_checker_prompt = f"""
-            You are an answer checker for {self.context}. Your responses always start with either the words ANSWER CORRECT or ANSWER INCORRECT.
-            
-            Your job is to thoroughly verify the accuracy of answers given by the question answerer agent about {self.context}.
-            
-            IMPORTANT: You must ALWAYS perform your own independent web search using the WebSearchPlugin to verify the facts in the answer.
+            You are an extremely seasoned answer validator working for Microsoft. Your responses always start with either the words ANSWER CORRECT or ANSWER INCORRECT.
+
+            Your job is to thoroughly verify the accuracy of answers given by the question answerer agent about a question from a RFP/RFQ/RFI questionnaire.
+
+            IMPORTANT: You must ALWAYS perform your own independent web search to verify the facts in the answer.
             Do not rely solely on your knowledge - search for the most current and accurate information.
             
             CRITICAL INSTRUCTION FOR REPEATED ANSWERS: 
@@ -81,7 +84,7 @@ class MultiAgent:
             3. Compare the search results with the answer, looking for:
                - Factual errors or outdated information
                - Misleading statements or omissions of important details
-               - Technical inaccuracies specific to {self.context}
+               - Technical inaccuracies.
             
             If ANY part of the answer contains inaccurate information, respond: "ANSWER INCORRECT" followed by a detailed explanation of where is incorrect, citing your search results.
             
@@ -131,21 +134,39 @@ class MultiAgent:
             You do not output anything other than "reject" or "APPROVE".
         """
     
+    async def get_azure_ai_agent(self, project_endpoint: str, agent_id: str) -> AzureAIAgent:
+        # Create credential
+        creds = DefaultAzureCredential()
+        # Create client
+        client = AzureAIAgent.create_client(
+            endpoint=project_endpoint,
+            credential=creds,
+        )
+        # Create the agent definition
+        agent_definition = await client.agents.get_agent(agent_id=agent_id)
+
+        # Create agent
+        agent = AzureAIAgent(
+            client=client,
+            definition=agent_definition,
+            
+        )
+        return agent
+    
     async def create_agents_and_chat(self):
         """Create the kernel, agents, and chat objects."""
-        
         # Create the kernel
         kernel = Kernel()
-        
-        kernel.add_service(
-            AzureChatCompletion(
-                service_id="question_answerer_service",
-                deployment_name=self.question_answerer_model,
-                endpoint=self.endpoint,
-                api_key=self.api_key
-            )
-        )
-        question_answerer_service = kernel.get_service("question_answerer_service")
+
+        # --- Prepare question_answerer_agent (Azure AI Agent) ---
+        # Retrieve required environment variables for Azure AI Agent
+        project_endpoint = os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
+        agent_id = os.environ.get("AZURE_AGENT_ID")
+        # Create the Azure AI Agent --> question answerer agent
+        question_answerer_agent = await self.get_azure_ai_agent(project_endpoint, agent_id)
+        qa_agent_name = question_answerer_agent.name
+
+        # question_answerer_service = kernel.get_service("question_answerer_service")
         kernel.add_service(
             AzureChatCompletion(
                 service_id="answer_checker_service",
@@ -175,12 +196,10 @@ class MultiAgent:
         manager_service = kernel.get_service("manager_service")
         
         # Import plugins
-        kernel.add_plugin(WebSearchPlugin(), plugin_name="bing")
+        # kernel.add_plugin(WebSearchPlugin(), plugin_name="bing")
         kernel.add_plugin(LinkCheckerPlugin(), plugin_name="link_checker")
         
         # Configure function choice behavior settings for each service
-        qa_settings = kernel.get_prompt_execution_settings_from_service_id(service_id="question_answerer_service")
-        qa_settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
         
         ac_settings = kernel.get_prompt_execution_settings_from_service_id(service_id="answer_checker_service")
         ac_settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
@@ -191,32 +210,7 @@ class MultiAgent:
         mg_settings = kernel.get_prompt_execution_settings_from_service_id(service_id="manager_service")
         mg_settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
         
-        # Add conversation awareness to the question answerer prompt
-        conversation_context = ""
-        if self.conversation_history:
-            conversation_context = "\n\nConversation history:\n"
-            for i, exchange in enumerate(self.conversation_history[-10:]):  # Only include the last 10 exchanges to avoid context overflow
-                conversation_context += f"Question {i+1}: {exchange['question']}\n"
-                conversation_context += f"Answer {i+1}: {exchange['answer']}\n\n"
-        
-        enhanced_question_answerer_prompt = f"""
-            {self.question_answerer_prompt}
-            
-            {conversation_context}
-            
-            Pay attention to the conversation history to understand follow-up questions and provide coherent responses.
-            If a question refers to previous questions or answers (using pronouns like "it", "that", "this", "they", etc.),
-            interpret it in the context of the conversation history.
-        """
-        
         # Create the agents with their specific service IDs
-        question_answerer_agent = ChatCompletionAgent(
-            kernel= kernel,
-            name="QuestionAnswererAgent",
-            instructions=enhanced_question_answerer_prompt,
-            service=question_answerer_service,
-            arguments=KernelArguments(settings=qa_settings)
-        )
         
         answer_checker_agent = ChatCompletionAgent(
             kernel=kernel,
@@ -250,17 +244,17 @@ class MultiAgent:
             Return only the name of the agent without explanation.
             
             The available agents are:
-            - QuestionAnswererAgent
+            - {qa_agent_name}
             - AnswerCheckerAgent
             - LinkCheckerAgent
             - ManagerAgent
             
             Rules:
-            - If this is the first message or if the ManagerAgent said "reject", choose QuestionAnswererAgent
-            - If QuestionAnswererAgent just responded with an answer, choose AnswerCheckerAgent
-            - If AnswerCheckerAgent's response starts with "ANSWER INCORRECT", choose QuestionAnswererAgent
+            - If this is the first message or if the ManagerAgent said "reject", choose {qa_agent_name}
+            - If {qa_agent_name} just responded with an answer, choose AnswerCheckerAgent
+            - If AnswerCheckerAgent's response starts with "ANSWER INCORRECT", choose {qa_agent_name}
             - If AnswerCheckerAgent's response starts with "ANSWER CORRECT", choose LinkCheckerAgent
-            - If LinkCheckerAgent's response starts with "LINKS INCORRECT", choose QuestionAnswererAgent
+            - If LinkCheckerAgent's response starts with "LINKS INCORRECT", choose {qa_agent_name}
             - If LinkCheckerAgent's response starts with "LINKS CORRECT", choose ManagerAgent
             - After ManagerAgent has said "APPROVE", terminate the conversation
             
@@ -289,7 +283,7 @@ class MultiAgent:
                 initial_agent=question_answerer_agent,
                 function=selection_function,
                 kernel=kernel,
-                result_parser=lambda result: str(result.value[0]).strip() if result.value[0] is not None else "QuestionAnswererAgent",
+                result_parser=lambda result: str(result.value[0]).strip() if result.value[0] is not None else qa_agent_name,
                 history_variable_name="lastmessage"
             ),
             termination_strategy=KernelFunctionTerminationStrategy(
@@ -302,7 +296,7 @@ class MultiAgent:
             )
         )
         
-        return chat
+        return chat, qa_agent_name
     
     async def ask_question(self, question, ui_callback=None):
         """
@@ -316,7 +310,7 @@ class MultiAgent:
             Dictionary with inner_monologue and final_answer
         """
         # Create the chat object
-        chat = await self.create_agents_and_chat()
+        chat, qa_agent_name = await self.create_agents_and_chat()
         
         # Add the user's question to the chat
         await chat.add_chat_message(message=question)
@@ -344,16 +338,16 @@ class MultiAgent:
                 if ui_callback:
                     await ui_callback(agent_name, response_text)
                 
-                # If this is from QuestionAnswererAgent and it's after an approval or the last message, 
+                # If this is from qa_agent_name and it's after an approval or the last message, 
                 # it's our final answer
-                if agent_name == "QuestionAnswererAgent":
+                if agent_name == qa_agent_name:
                     final_answer = response_text
                 
                 # Check if manager APPROVEd, and the last message was the final answer
                 if agent_name == "ManagerAgent" and "APPROVE" in response_text.lower():
-                    # Our final answer is the QuestionAnswererAgent's most recent response
+                    # Our final answer is the qa_agent_name's most recent response
                     for interaction in reversed(agent_interactions):
-                        if interaction["agent"] == "QuestionAnswererAgent":
+                        if interaction["agent"] == qa_agent_name:
                             final_answer = interaction["content"]
                             break
             

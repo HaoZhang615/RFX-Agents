@@ -1,5 +1,6 @@
 """
-Multi-Agent helper Helper Streamlit Application
+Multi-Agent RFX Helper Streamlit Application
+Powered by Azure AI Agent with intelligent web search capabilities
 """
 import os
 import asyncio
@@ -28,8 +29,6 @@ if "agent_instance" not in st.session_state:
 
 # Sidebar configuration
 with st.sidebar:
-    st.header("Agent Configuration")
-    
     # Display agents online using the utility function
     st.markdown(render_agents_online(), unsafe_allow_html=True)
     
@@ -38,53 +37,7 @@ with st.sidebar:
         "Show Agents' Inner Monologue", 
         value=False
     )
-    # Context select dropdown
-    st.subheader("Research Context")
-    
-    # Initialize selected_context in session state if it doesn't exist
-    if "selected_contexts" not in st.session_state:
-        st.session_state.selected_contexts = ["Azure AI"]
-    
-    # Context mapping for agent prompts
-    context_mapping = {
-        "Azure AI": "Microsoft Azure AI",
-        "Fabric": "Microsoft Fabric",
-        "Copilot Studio": "Microsoft Copilot Studio",
-        "M365 Copilot": "Microsoft 365 Copilot"
-    }
-    
-    # Create the multiselect with our context options
-    selected_contexts = st.multiselect(
-        "Select research contexts:",
-        options=list(context_mapping.keys()),
-        default=st.session_state.selected_contexts,
-        key="context_multiselect"
-    )
-    
-    # If nothing is selected, default to "Azure AI"
-    if not selected_contexts:
-        selected_contexts = ["Azure AI"]
-    
-    # Update session state with the selection and update agent context
-    if selected_contexts != st.session_state.selected_contexts:
-        st.session_state.selected_contexts = selected_contexts
-        
-        # Create a combined context string for the agent
-        if len(selected_contexts) > 1:
-            # Join multiple contexts with commas and "and"
-            context_names = [context_mapping[ctx] for ctx in selected_contexts]
-            if len(context_names) == 2:
-                context_str = f"{context_names[0]} and {context_names[1]}"
-            else:
-                context_str = ", ".join(context_names[:-1]) + f", and {context_names[-1]}"
-        else:
-            # Single selection
-            context_str = context_mapping[selected_contexts[0]]
-            
-        # Update the agent's context based on the multiselect
-        st.session_state.agent_instance.update_prompts(context=context_str)
-        st.success(f"Context updated to: {context_str}")
-    
+
     if st.button("Restart Conversation 🔄"):
         st.session_state.messages = []
         st.rerun()
@@ -114,7 +67,7 @@ for msg in st.session_state.messages:
             st.markdown(msg["content"])
 
 # Handle user input
-if prompt := st.chat_input("Ask a question about Microsoft Technology..."):
+if prompt := st.chat_input("Ask your RFP/RFQ/RFI question..."):
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
     
