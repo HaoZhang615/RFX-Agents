@@ -42,8 +42,8 @@ class MultiAgent:
         self.api_key = os.getenv("AZURE_OPENAI_API_KEY")
         
         # Model deployment names for different agents
-        self.question_answerer_model = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME") # 
-        self.answer_checker_model = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME") # 
+        # self.question_answerer_model = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME") # 
+        # self.answer_checker_model = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME") # 
         self.link_checker_model = os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT_NAME") # 
         self.manager_model = os.getenv("AZURE_OPENAI_CHAT_NANO_DEPLOYMENT_NAME") # 
         
@@ -66,32 +66,32 @@ class MultiAgent:
         #     If you do not find information on a topic, you simply respond that there is no information available on that topic.
         # """
         
-        self.answer_checker_prompt = f"""
-            You are an extremely seasoned answer validator working for Microsoft. Your responses always start with either the words ANSWER CORRECT or ANSWER INCORRECT.
+        # self.answer_checker_prompt = f"""
+        #     You are an extremely seasoned answer validator working for Microsoft. Your responses always start with either the words ANSWER CORRECT or ANSWER INCORRECT.
 
-            Your job is to thoroughly verify the accuracy of answers given by the question answerer agent about a question from a RFP/RFQ/RFI questionnaire.
+        #     Your job is to thoroughly verify the accuracy of answers given by the question answerer agent about a question from a RFP/RFQ/RFI questionnaire.
 
-            IMPORTANT: You must ALWAYS perform your own independent web search to verify the facts in the answer.
-            Do not rely solely on your knowledge - search for the most current and accurate information.
+        #     IMPORTANT: You must ALWAYS perform your own independent web search to verify the facts in the answer.
+        #     Do not rely solely on your knowledge - search for the most current and accurate information.
             
-            CRITICAL INSTRUCTION FOR REPEATED ANSWERS: 
-            If this is not the first answer from the Question Answerer, focus ONLY on the MOST RECENT answer. 
-            Ignore any previous answers that might have been incorrect. Only evaluate the current answer in front of you.
+        #     CRITICAL INSTRUCTION FOR REPEATED ANSWERS: 
+        #     If this is not the first answer from the Question Answerer, focus ONLY on the MOST RECENT answer. 
+        #     Ignore any previous answers that might have been incorrect. Only evaluate the current answer in front of you.
             
-            VERIFICATION PROCESS:
-            1. Carefully read the question and the provided answer
-            2. Use the WebSearchPlugin to search for relevant information about key claims in the answer
-            3. Compare the search results with the answer, looking for:
-               - Factual errors or outdated information
-               - Misleading statements or omissions of important details
-               - Technical inaccuracies.
+        #     VERIFICATION PROCESS:
+        #     1. Carefully read the question and the provided answer
+        #     2. Use the WebSearchPlugin to search for relevant information about key claims in the answer
+        #     3. Compare the search results with the answer, looking for:
+        #        - Factual errors or outdated information
+        #        - Misleading statements or omissions of important details
+        #        - Technical inaccuracies.
             
-            If ANY part of the answer contains inaccurate information, respond: "ANSWER INCORRECT" followed by a detailed explanation of where is incorrect, citing your search results.
+        #     If ANY part of the answer contains inaccurate information, respond: "ANSWER INCORRECT" followed by a detailed explanation of where is incorrect, citing your search results.
             
-            Otherwise respond ONLY: "ANSWER CORRECT." and hand over to the link checker agent.
+        #     Otherwise respond ONLY: "ANSWER CORRECT." and hand over to the link checker agent.
                         
-            You respond EITHER "ANSWER INCORRECT" with a detailed explanation OR "ANSWER CORRECT" without explanation.
-        """
+        #     You respond EITHER "ANSWER INCORRECT" with a detailed explanation OR "ANSWER CORRECT" without explanation.
+        # """
         
         self.link_checker_prompt = """
             You are a link checker. Your responses always start with either the words LINKS CORRECT or LINK INCORRECT.
@@ -158,24 +158,31 @@ class MultiAgent:
         # Create the kernel
         kernel = Kernel()
 
-        # --- Prepare question_answerer_agent (Azure AI Agent) ---
+        # --- Prepare question_answerer_agent and answer_checker_agent (Azure AI Agent) ---
         # Retrieve required environment variables for Azure AI Agent
         project_endpoint = os.environ.get("AZURE_AI_PROJECT_ENDPOINT")
-        agent_id = os.environ.get("AZURE_AGENT_ID")
+        qa_agent_id = os.environ.get("QA_AZURE_AGENT_ID")
+        ac_agent_id = os.environ.get("AC_AZURE_AGENT_ID")
+
         # Create the Azure AI Agent --> question answerer agent
-        question_answerer_agent = await self.get_azure_ai_agent(project_endpoint, agent_id)
+        question_answerer_agent = await self.get_azure_ai_agent(project_endpoint, qa_agent_id)
         qa_agent_name = question_answerer_agent.name
+        # Create the Azure AI Agent --> answer checker agent
+        answer_checker_agent = await self.get_azure_ai_agent(project_endpoint, ac_agent_id)
+        ac_agent_name = answer_checker_agent.name
 
         # question_answerer_service = kernel.get_service("question_answerer_service")
-        kernel.add_service(
-            AzureChatCompletion(
-                service_id="answer_checker_service",
-                deployment_name=self.answer_checker_model,
-                endpoint=self.endpoint,
-                api_key=self.api_key
-            )
-        )
-        answer_checker_service = kernel.get_service("answer_checker_service")
+        # kernel.add_service(
+        #     AzureChatCompletion(
+        #         service_id="answer_checker_service",
+        #         deployment_name=self.answer_checker_model,
+        #         endpoint=self.endpoint,
+        #         api_key=self.api_key
+        #     )
+        # )
+        # answer_checker_service = kernel.get_service("answer_checker_service")
+
+        # Create SK AzureChatCompletion services for each agent
         kernel.add_service(
             AzureChatCompletion(
                 service_id="link_checker_service",
@@ -201,8 +208,8 @@ class MultiAgent:
         
         # Configure function choice behavior settings for each service
         
-        ac_settings = kernel.get_prompt_execution_settings_from_service_id(service_id="answer_checker_service")
-        ac_settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
+        # ac_settings = kernel.get_prompt_execution_settings_from_service_id(service_id="answer_checker_service")
+        # ac_settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
         
         lc_settings = kernel.get_prompt_execution_settings_from_service_id(service_id="link_checker_service")
         lc_settings.function_choice_behavior = FunctionChoiceBehavior.Auto()
@@ -212,13 +219,13 @@ class MultiAgent:
         
         # Create the agents with their specific service IDs
         
-        answer_checker_agent = ChatCompletionAgent(
-            kernel=kernel,
-            name="AnswerCheckerAgent", 
-            instructions=self.answer_checker_prompt,
-            service=answer_checker_service,
-            arguments=KernelArguments(settings=ac_settings)
-        )
+        # answer_checker_agent = ChatCompletionAgent(
+        #     kernel=kernel,
+        #     name="AnswerCheckerAgent", 
+        #     instructions=self.answer_checker_prompt,
+        #     service=answer_checker_service,
+        #     arguments=KernelArguments(settings=ac_settings)
+        # )
         
         link_checker_agent = ChatCompletionAgent(
             kernel=kernel,
@@ -245,15 +252,15 @@ class MultiAgent:
             
             The available agents are:
             - {qa_agent_name}
-            - AnswerCheckerAgent
+            - {ac_agent_name}
             - LinkCheckerAgent
             - ManagerAgent
             
             Rules:
             - If this is the first message or if the ManagerAgent said "reject", choose {qa_agent_name}
-            - If {qa_agent_name} just responded with an answer, choose AnswerCheckerAgent
-            - If AnswerCheckerAgent's response starts with "ANSWER INCORRECT", choose {qa_agent_name}
-            - If AnswerCheckerAgent's response starts with "ANSWER CORRECT", choose LinkCheckerAgent
+            - If {qa_agent_name} just responded with an answer, choose {ac_agent_name}
+            - If {ac_agent_name}'s response starts with "ANSWER INCORRECT", choose {qa_agent_name}
+            - If {ac_agent_name}'s response starts with "ANSWER CORRECT", choose LinkCheckerAgent
             - If LinkCheckerAgent's response starts with "LINKS INCORRECT", choose {qa_agent_name}
             - If LinkCheckerAgent's response starts with "LINKS CORRECT", choose ManagerAgent
             - After ManagerAgent has said "APPROVE", terminate the conversation
